@@ -1,0 +1,337 @@
+---
+title: "Regression Tree and Classification Tree"
+author: "Group 35"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Regression Tree
+
+## Data Preprocessing
+
+```{r}
+udemy <- read.csv("udemy.csv")
+udemy <- udemy[udemy$num_subscribers!=0,]
+udemy$num_subscribers2 <- (udemy$num_subscribers)**(0.2) #transformation of response variable
+colnames(udemy)
+udemy <- udemy[,c(-1,-2,-3,-6,-11)] #remove course id, course title, url, num_subscribers, published_timestamp
+colnames(udemy)
+```
+
+```{r}
+is.factor(udemy$is_paid)
+is.factor(udemy$level)
+is.factor(udemy$subject)
+
+udemy$is_paid<-as.factor(udemy$is_paid)
+udemy$level<-as.factor(udemy$level)
+udemy$subject<-as.factor(udemy$subject)
+
+is.factor(udemy$is_paid)
+is.factor(udemy$level)
+is.factor(udemy$subject)
+
+contrasts(udemy$is_paid)
+contrasts(udemy$level)
+contrasts(udemy$subject)
+```
+
+# Model Building
+```{r}
+set.seed(199)
+samp<-sample.int(nrow(udemy), floor(.50*nrow(udemy)), replace = F)
+train<-udemy[samp, ]
+test<-udemy[-samp, ]
+head(train)
+pred.test<-test[,"num_subscribers2"]
+
+```
+
+```{r}
+library(tree)
+tree.train <- tree(num_subscribers2 ~., data = train)
+summary(tree.train)
+# 8 terminal nodes
+# 2 predictors actually used
+# residual mean deviance - 0.9278
+plot(tree.train)
+text(tree.train,cex=0.75, pretty=0)
+tree.pred.test<-predict(tree.train, newdata=test)
+mean((tree.pred.test-pred.test)^2)
+#0.9427485
+```
+
+# Pruning
+```{r}
+set.seed(199)
+cv.train <- cv.tree(tree.train, K=10)
+cv.train
+#lowest deviance is when number of terminal nodes is 8
+plot(cv.train$size, cv.train$dev,type='b')
+trees.num<-cv.train$size[which.min(cv.train$dev)]
+trees.num
+```
+
+## Pruned Tree
+```{r}
+prune.tree <-prune.tree(tree.train, best=trees.num)
+plot(prune.tree)
+text(prune.tree, cex=0.75, pretty=0)
+summary(prune.tree)
+#same tree as using recursive binary splitting
+tree.prune.pred.test<-predict(prune.tree, newdata=test)
+mean((tree.prune.pred.test-pred.test)^2)
+```
+
+
+## Random Forest
+```{r}
+library(randomForest)
+set.seed(199)
+rf.train<-randomForest(num_subscribers2~., data=train, mtry=2,importance=TRUE)
+rf.train
+# 0.7485872 - mean of squared residuals
+tree.forest.pred <- predict(rf.train, newdata=test)
+mean((tree.forest.pred-pred.test)^2)
+# 0.7514319
+importance(rf.train)
+varImpPlot(rf.train)
+```
+
+
+
+
+
+# Classification Tree
+
+## data preprocessing
+```{r}
+data<-read.csv('udemy.csv')
+udemy <- data[data$num_subscribers>2300,c(-1,-2,-3,-5,-11)]
+```
+
+```{r}
+is.factor(udemy$is_paid)
+is.factor(udemy$level)
+is.factor(udemy$subject)
+
+udemy$is_paid<-as.factor(udemy$is_paid)
+udemy$level<-as.factor(udemy$level)
+udemy$subject<-as.factor(udemy$subject)
+
+is.factor(udemy$is_paid)
+is.factor(udemy$level)
+is.factor(udemy$subject)
+
+contrasts(udemy$is_paid)
+contrasts(udemy$level)
+contrasts(udemy$subject)
+```
+
+```{r}
+set.seed(199)
+samp<-sample.int(nrow(udemy), floor(.50*nrow(udemy)), replace = F)
+train<-udemy[samp, ]
+test<-udemy[-samp, ]
+head(train)
+```
+
+
+## Recursive Binary Splitting
+
+```{r}
+library(tree)
+tree.class.train<-tree(is_paid~., data=train)
+summary(tree.class.train)
+
+##plot tree
+plot(tree.class.train)
+text(tree.class.train, cex=0.75, pretty=0)
+```
+
+## Pruning
+```{r}
+##use CV
+set.seed(199)
+cv.class<-cv.tree(tree.class.train, K=10) 
+cv.class
+plot(cv.class$size, cv.class$dev, type="b", xlab="Size of Tree", ylab="Deviance")
+##plot of dev against size
+
+
+##size of tree chosen by pruning
+trees.num.class<-cv.class$size[which.min(cv.class$dev)]
+trees.num.class 
+
+##fit tree with size chosen by pruning
+prune.class<-prune.tree(tree.class.train, best=trees.num.class)
+summary(prune.class)
+
+##plot pruned tree
+plot(prune.class)
+text(prune.class, cex=0.75, pretty=0)
+```
+
+## Error rates
+
+### recursive tree
+```{r}
+##store the response variable for test data. Use later to evaluate test MSE
+pred.test<-test[,"is_paid"]
+
+##find predicted classes for test data
+tree.pred.test<-predict(tree.class.train, newdata=test, type="class") 
+
+##confusion matrix for test data
+matrix<-table(pred.test, tree.pred.test) 
+matrix
+
+#     tree.pred.test
+#pred.test FALSE TRUE
+#    FALSE    41   70
+#    TRUE     33  352
+
+##overall accuracy
+mean(tree.pred.test==pred.test) #0.7983871
+
+## overall test error rate 
+error<-(matrix[1,2]+matrix[2,1])/sum(matrix)
+error #0.2016129
+
+## 2.false positive rate
+fp_rate <-matrix[1,2]/(matrix[1,2]+matrix[1,1])
+fp_rate #0.6306306
+
+## 3.false negative rate
+fn_rate <-matrix[2,1]/(matrix[2,1]+matrix[2,2])
+fn_rate #0.08571429
+
+#####################Adjust Threshold#########################
+
+tree.pred.test2<-predict(tree.class.train, newdata=test) 
+matrix2 <- table(pred.test, tree.pred.test2[,2]>0.7) 
+matrix2
+##overall test error rate
+mean((tree.pred.test2[,2]>0.7)!=pred.test) ##0.2439516
+
+#pred.test FALSE TRUE
+#    FALSE    76   35
+#    TRUE     86  299
+
+
+# 2.false positive rate
+fp_rate2 <-matrix2[1,2]/(matrix2[1,2]+matrix2[1,1])
+fp_rate2 # 0.3153153
+
+# 3.false negative rate
+fn_rate2<-matrix2[2,1]/(matrix2[2,2]+matrix2[2,1])
+fn_rate2 # 0.2233766
+```
+
+### prune tree
+```{r}
+##prediction based on pruned tree for test data
+tree.pred.prune<-predict(prune.class, newdata=test, type="class")
+
+##confusion matrix for test data
+matrix3<-table(pred.test, tree.pred.prune)
+matrix3
+
+#    tree.pred.prune
+#pred.test FALSE TRUE
+#    FALSE    65   46
+#    TRUE     56  329
+
+##overall accuracy
+mean(tree.pred.prune==pred.test) #0.7943548
+
+##overall test error rate 
+error3<-(matrix3[1,2]+matrix3[2,1])/sum(matrix3)
+error3 #0.2056452
+
+# 2.false positive rate
+fp_rate3 <-matrix3[1,2]/(matrix3[1,2]+matrix3[1,1])
+fp_rate3 # 0.4144144
+
+# 3.false negative rate
+fn_rate3 <-matrix3[2,1]/(matrix3[2,1]+matrix3[2,2])
+fn_rate3 #0.1454545
+
+#####################Adjust Threshold#########################
+
+tree.pred.prune2<-predict(prune.class, newdata=test)
+table(pred.test, tree.pred.prune2[,2]>0.7)
+
+matrix4<-table(pred.test, tree.pred.prune2[,2]>0.7) 
+matrix4
+
+#pred.test FALSE TRUE
+#    FALSE    65   46
+#    TRUE     56  329
+
+# overall test error rate 
+error4<-(matrix4[1,2]+matrix4[2,1])/sum(matrix4)
+error4 #  0.2056452
+
+# 2.false positive rate
+fp_rate4 <-matrix4[1,2]/(matrix4[1,2]+matrix4[1,1])
+fp_rate4 # 0.4144144
+
+# 3.false negative rate
+fn_rate4 <-matrix4[2,1]/(matrix4[2,2]+matrix4[2,1])
+fn_rate4 #0.1454545
+
+#    tree.pred.prune
+#pred.test FALSE TRUE
+#    FALSE    65   46
+#    TRUE     56  329
+
+```
+
+
+## Random Forest
+
+```{r}
+library(randomForest)
+set.seed(199)
+rf.class<-randomForest(is_paid~., data=train, mtry=2,importance=TRUE)
+rf.class
+
+importance(rf.class)
+varImpPlot(rf.class,main = "Important Predictors in Random Forest")
+
+##test accuracy with Random Forest
+pred.rf<-predict(rf.class, newdata=test)
+##confusion matrix for test data
+table(pred.test, pred.rf)
+
+##overall error rate
+mean(pred.rf!=pred.test) #0.1451613
+
+##FPR
+55/(55+56) #0.4954955
+
+##FNR
+16/(16+369) #0.04155844
+
+#####################Adjust Threshold #########################
+
+pred.rf2<-predict(rf.class, newdata=test, type = 'prob')
+table(pred.test, pred.rf2[,2]>0.7)
+
+##overall error rate
+mean((pred.rf2[,2]>0.7)!=pred.test) #0.1774194
+
+##FPR
+26/(26+85) #0.2342342
+
+##FNR
+62/(62+323) #0.161039
+```
+
+
+

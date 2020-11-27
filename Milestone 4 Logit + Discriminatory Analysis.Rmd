@@ -1,0 +1,440 @@
+---
+title: "Milestone 4 - Group 35"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# EDA
+
+## data preprocessing
+```{r}
+data<-read.csv('udemy.csv')
+
+#class distribution
+counts <- table(data$is_paid)
+barplot(counts, main="Is_paid Distribution before subset",
+   xlab="Number of observations",ylim = c(0, 3500))
+
+
+udemy <- data[data$num_subscribers>2300,]
+table(udemy$is_paid)
+
+#class distribution
+counts <- table(udemy$is_paid)
+barplot(counts, main="Is_paid Distribution after subset",
+   xlab="Number of observations", ylim = c(0, 3500))
+```
+
+```{r}
+is.factor(udemy$is_paid)
+is.factor(udemy$level)
+is.factor(udemy$subject)
+
+udemy$is_paid<-as.factor(udemy$is_paid)
+udemy$level<-as.factor(udemy$level)
+udemy$subject<-as.factor(udemy$subject)
+
+is.factor(udemy$is_paid)
+is.factor(udemy$level)
+is.factor(udemy$subject)
+
+contrasts(udemy$is_paid)
+contrasts(udemy$level)
+contrasts(udemy$subject)
+```
+
+```{r}
+set.seed(199)
+samp<-sample.int(nrow(udemy), floor(.50*nrow(udemy)), replace = F)
+train<-udemy[samp, ]
+test<-udemy[-samp, ]
+head(train)
+```
+
+## Graphical Summaries
+
+### Response vs Quantitative
+```{r}
+par(mfrow=c(2,3))
+boxplot(train$num_subscribers[train$num_subscribers<4000]~train$is_paid[train$num_subscribers<4000], main="Number of Subscribers(<4000) by Is_Paid ", xlab = 'Is_paid',ylab = 'Number of Subscribers')
+boxplot(train$num_reviews[train$num_reviews<1000]~train$is_paid[train$num_reviews<1000], main="Number of Reviews(<1000) by Is_Paid", xlab = 'Is_paid',ylab = 'Number of Reviews')
+boxplot(train$num_lectures[train$num_lectures<200]~train$is_paid[train$num_lectures<200], main="Number of Lectures(<200) by Is_Paid",xlab = 'Is_paid',ylab = 'Number of Lectures')
+boxplot(train$content_duration[train$content_duration<20]~train$is_paid[train$content_duration<20], main="Content Duration(<20h) by Is_Paid",xlab = 'Is_paid',ylab = 'Content Duration')
+boxplot(train$days_published~train$is_paid, main="Days Since Published by Is_Paid",xlab = 'Is_paid',ylab = 'Days Since Published')
+
+```
+
+
+### Response vs Qualitative
+```{r}
+library(ggplot2)
+
+par(mfrow=c(1,2))
+ggplot(train, aes(level, fill = is_paid)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..)), position = "dodge") +
+  scale_y_continuous(labels= scales::percent)+
+  theme_bw() +
+  labs(y="Proportion", x = "Level", title= "Level by Is_Paid")+ 
+  theme(plot.title = element_text(hjust = 0.5,face="bold")) 
+
+ggplot(train, aes(subject, fill = is_paid)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..)), position = "dodge") +
+  scale_y_continuous(labels= scales::percent)+
+  theme_bw() +
+  labs(y="Proportion", x = "Subject", title= "Subject by Is_Paid")+ 
+  theme(plot.title = element_text(hjust = 0.5,face="bold")) 
+```
+
+
+
+# Model Building
+
+## (a) Data Preprocessing
+
+Did it in EDA
+
+## (b) Explain predictors (Quantitative only) to use in both Logistic Regression and LDA and builde models
+
+Based on EDA, the important quantitative variables are: 
+  - number of subscribers
+  - number of lectures
+  - content duration
+  - number of reviews
+  - days since published
+
+```{r}
+#Logistic regression
+model.logistic<-glm(is_paid ~ num_subscribers + num_lectures+content_duration+num_reviews+days_published, family="binomial", data=train)
+summary(model.logistic)
+```
+
+
+```{r}
+#LDA
+library(MASS)
+model.lda <- lda(is_paid ~ num_subscribers + num_lectures+content_duration+num_reviews+days_published, train)
+model.lda
+```
+
+
+
+# (c) Compare models from part b
+
+- ROC curve
+```{r}
+par(mfrow=c(1,2))
+#Logistic regression
+library(ROCR)
+preds.logistic<-predict(model.logistic,newdata=test, type="response")
+rates.logistic<-prediction(preds.logistic, test$is_paid)
+roc_result.logistic<-performance(rates.logistic, measure="tpr", x.measure="fpr")
+plot(roc_result.logistic, main="ROC Curve for the Logit Model")
+lines(x = c(0,1), y = c(0,1), col="red")
+
+#LDA
+lda.test <- predict(model.lda,test)
+preds.lda<-lda.test$posterior[,2]
+rates.lda<-prediction(preds.lda, test$is_paid)
+roc_result.lda<-performance(rates.lda,measure="tpr", x.measure="fpr")
+plot(roc_result.lda, main="ROC Curve for the LDA Model")
+lines(x = c(0,1), y = c(0,1), col="red")
+```
+
+
+- AUC
+```{r}
+#Logistic regression
+performance(rates.logistic, measure = "auc")@y.values[[1]] #0.8377676
+
+#LDA
+performance(rates.lda, measure = "auc")@y.values[[1]] #0.7747514
+```
+
+
+- Estimated test error rate using k fold cross-validation with k = 5 and k = 10.
+
+```{r}
+library(boot) ##for cv.glm
+library(ipred) ##for errorest function needed for k fold CV
+
+#Logistic regression
+set.seed(199)
+five.fold.logistic<-cv.glm(train, model.logistic, K=5)
+five.fold.logistic$delta #0.1450885
+
+set.seed(199)
+ten.fold.logistic<-cv.glm(train, model.logistic, K=10)
+ten.fold.logistic$delta #0.1435610
+
+#LDA
+cv.da <- function(object, newdata) {return(predict(object, newdata = newdata)$class)} 
+
+set.seed(199)
+errorest(is_paid ~ num_subscribers + num_lectures+content_duration+num_reviews+days_published, data=train, model=lda, estimator="cv", est.para=control.errorest(k=5), predict=cv.da)$err #0.2237903
+
+set.seed(199)
+errorest(is_paid ~ num_subscribers + num_lectures+content_duration+num_reviews+days_published, data=train, model=lda, estimator="cv", est.para=control.errorest(k=10), predict=cv.da)$err #0.2258065
+```
+
+
+- Actual Test error rate
+
+```{r}
+#logistic regression
+matrix.logistic <- table(test$is_paid, preds.logistic > 0.7) 
+matrix.logistic 
+(matrix.logistic[1,2] +matrix.logistic[2,1])/sum(matrix.logistic) #0.2116935
+
+31/(31+80) #fpr: 0.2792793
+74/(74+311) #fnr: 0.1922078
+
+
+#LDA
+matrix.lda <- table(test$is_paid,lda.test$posterior[,2]>0.7)
+matrix.lda
+(matrix.lda[1,2] + matrix.lda[2,1])/sum(matrix.lda) #0.2318548
+71/(71+40) #fpr: 0.6396396
+50/(50+335) #fnr: 0.1298701
+
+```
+
+# Improve the logistic regression model
+
+- add/remove quantitative vars: 
+
+remove content_duration
+```{r}
+
+model.logistic2<-glm(is_paid ~ num_subscribers + num_lectures+num_reviews +days_published, family="binomial", data=train)
+summary(model.logistic2)
+```
+
+remove num_reviews 
+```{r}
+model.logistic3<-glm(is_paid ~ num_subscribers + num_lectures + days_published, family="binomial", data=train)
+summary(model.logistic3) #quan only
+```
+
+- add categorical vars
+
+try level (significant, should include it)
+```{r}
+model.logistic4 <- glm(is_paid ~ num_subscribers + num_lectures + days_published+ level, family="binomial", data=train)
+summary(model.logistic4)
+TS <- model.logistic3$dev-model.logistic4$dev
+1-pchisq(TS, 3) # p = 0.027; reject null use new model
+```
+
+try subject (significant, should include it)
+```{r}
+model.logistic5 <- glm(is_paid ~ num_subscribers + num_lectures +days_published +level + subject, family="binomial", data=train)
+summary(model.logistic5)
+TS2 <- model.logistic4$dev-model.logistic5$dev
+1-pchisq(TS2, 3) #reject null 
+```
+
+
+- add interaction terms
+
+ - continuous * continuous
+ 
+ #subs *lecture (x)
+```{r}
+model.logistic6 <- glm(is_paid ~ num_subscribers + num_lectures +days_published +level + subject +num_subscribers*num_lectures, family="binomial", data=train)
+summary(model.logistic6 )
+```
+
+ #subs * pubs (x)
+```{r}
+model.logistic7 <- glm(is_paid ~ num_subscribers + num_lectures +days_published +level + subject +num_subscribers*days_published, family="binomial", data=train)
+summary(model.logistic7)
+```
+
+ #lectures * pubs (x)
+```{r}
+model.logistic8 <- glm(is_paid ~ num_subscribers + num_lectures +days_published +level + subject +num_lectures*days_published, family="binomial", data=train)
+summary(model.logistic8)
+```
+
+  - continuous * categorical
+  #level*num_subscribers(x)
+```{r}
+model.logistic9 <- glm(is_paid ~ num_subscribers + num_lectures +days_published +level + subject +level*num_subscribers, family="binomial", data=train)
+summary(model.logistic9)
+1-pchisq(model.logistic5$dev-model.logistic9$dev, 3) 
+```
+
+  #level*num_lectures(x)
+```{r}
+model.logistic10 <- glm(is_paid ~ num_subscribers + num_lectures +days_published +level + subject +level*num_lectures, family="binomial", data=train)
+summary(model.logistic10)
+1-pchisq(model.logistic5$dev-model.logistic10$dev, 3) 
+```
+
+  #level*days_published(x)
+```{r}
+model.logistic11 <- glm(is_paid ~ num_subscribers + num_lectures +days_published +level + subject +level*days_published, family="binomial", data=train)
+summary(model.logistic11)
+1-pchisq(model.logistic5$dev-model.logistic11$dev, 3) 
+```
+
+  #subject*num_subscribers(x)
+```{r}
+model.logistic12 <- glm(is_paid ~ num_subscribers + num_lectures +days_published +level + subject +subject*num_subscribers, family="binomial", data=train)
+summary(model.logistic12)
+1-pchisq(model.logistic5$dev-model.logistic12$dev, 3) 
+```
+
+  #subject*num_lectures(x)
+```{r}
+model.logistic13 <- glm(is_paid ~ num_subscribers + num_lectures +days_published +level + subject +subject*num_lectures, family="binomial", data=train)
+summary(model.logistic13)
+1-pchisq(model.logistic5$dev-model.logistic13$dev, 3) 
+```
+
+ #subject*pubs(x)
+```{r}
+model.logistic14 <- glm(is_paid ~ num_subscribers + num_lectures +days_published +level + subject +subject*days_published, family="binomial", data=train)
+summary(model.logistic14)
+1-pchisq(model.logistic5$dev-model.logistic14$dev, 3) 
+```
+
+
+Improved logistic model: model 5 (for now)
+
+- ROC curve
+```{r}
+#create new columns for the test data
+preds.logistic5<-predict(model.logistic5,newdata=test, type="response")
+rates.logistic5<-prediction(preds.logistic5, test$is_paid)
+roc_result.logistic5<-performance(rates.logistic5, measure="tpr", x.measure="fpr")
+plot(roc_result.logistic5, main="ROC Curve for Improved Logistic Regreesion Model")
+lines(x = c(0,1), y = c(0,1), col="red")
+```
+
+
+
+- AUC
+```{r}
+performance(rates.logistic5, measure = "auc")@y.values[[1]] #0.8477126
+```
+
+
+- Estimated test error rate using k fold cross-validation with k = 5 and k = 10.
+
+```{r}
+#Logistic regression
+set.seed(199)
+five.fold.logistic<-cv.glm(train, model.logistic5, K=5)
+five.fold.logistic$delta #0.1471414
+
+set.seed(199)
+ten.fold.logistic<-cv.glm(train, model.logistic5, K=10)
+ten.fold.logistic$delta #0.1422875
+```
+
+
+
+- Actual Test error rate
+
+```{r}
+#logistic regression
+matrix.logistic5 <- table(test$is_paid, preds.logistic5 > 0.7) 
+matrix.logistic5 
+(matrix.logistic5[1,2] +matrix.logistic5[2,1])/sum(matrix.logistic5) #0.2237903
+30/(30+81) #fpr:0.2702703
+81/(81+304) #fnr:0.2103896
+
+```
+
+Model 5 ended up worse.. see Model 3
+
+Check Model 3
+
+- ROC curve
+```{r}
+library(ROCR)
+par(mfrow=c(1,3))
+
+plot(roc_result.logistic, main="ROC Curve for Initial")
+lines(x = c(0,1), y = c(0,1), col="red")
+
+preds.logistic3<-predict(model.logistic3,newdata=test, type="response")
+rates.logistic3<-prediction(preds.logistic3, test$is_paid)
+roc_result.logistic3<-performance(rates.logistic3, measure="tpr", x.measure="fpr")
+plot(roc_result.logistic3, main="ROC Curve for Final")
+lines(x = c(0,1), y = c(0,1), col="red")
+
+plot(roc_result.lda, main="ROC Curve for LDA")
+lines(x = c(0,1), y = c(0,1), col="red")
+```
+
+- AUC
+```{r}
+performance(rates.logistic3, measure = "auc")@y.values[[1]] #0.8352872
+```
+
+- k fold cross validation
+```{r}
+#Logistic regression
+set.seed(199)
+five.fold.logistic3<-cv.glm(train, model.logistic3, K=5)
+five.fold.logistic3$delta #0.1471414
+
+set.seed(199)
+ten.fold.logistic3<-cv.glm(train, model.logistic3, K=10)
+ten.fold.logistic3$delta #0.1422875
+```
+
+- actual error rate
+```{r}
+#logistic regression
+matrix.logistic3 <- table(test$is_paid, preds.logistic3 > 0.7) 
+matrix.logistic3
+(matrix.logistic3[1,2] +matrix.logistic3[2,1])/sum(matrix.logistic3) #0.2056452
+30/(30+81) #fpr:0.2702703
+72/(81+313) #fnr:0.1827411
+```
+
+Model 3 is the final model...
+
+# Discussion output from the logistic regression model from the summary()
+```{r}
+summary(model.logistic) #initial
+summary(model.logistic3) #final
+```
+
+
+# Discussion output from the LDA model from lda()
+```{r}
+model.lda
+```
+
+
+
+# Conclusion
+
+## LDA - Assumption check
+
+
+```{r}
+library(klaR)
+library(CompQuadForm)
+library(mvtnorm)
+library(ICS)
+##split data into the two classes
+free<-train[which(train$is_paid=="FALSE"),]
+paid<-train[which(train$is_paid=="TRUE"),]
+
+##MVN tests for free - sig
+mvnorm.kur.test(free[,c(6,7,8,10,13)])
+mvnorm.skew.test(free[,c(6,7,8,10,13)])
+
+##MVN tests for paid - sig
+mvnorm.kur.test(paid[,c(6,7,8,10,13)])
+mvnorm.skew.test(paid[,c(6,7,8,10,13)])
+```

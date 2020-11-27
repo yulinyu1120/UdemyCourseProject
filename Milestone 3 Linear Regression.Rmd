@@ -1,0 +1,216 @@
+---
+title: "Regression - EDA"
+author: "Group 35"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Data Preprocessing
+
+```{r}
+udemy <- read.csv("udemy.csv")
+udemy <- udemy[udemy$num_subscribers!=0,]
+```
+
+
+```{r}
+is.factor(udemy$is_paid)
+is.factor(udemy$level)
+is.factor(udemy$subject)
+udemy$is_paid<-as.factor(udemy$is_paid)
+is.factor(udemy$is_paid)
+
+contrasts(udemy$is_paid)
+contrasts(udemy$level)
+contrasts(udemy$subject)
+```
+
+train-test split
+```{r}
+RNGkind(sample.kind = "Rejection")
+set.seed(199)
+samp<-sample.int(nrow(udemy), floor(.50*nrow(udemy)), replace = F)
+train<-udemy[samp, ]
+test<-udemy[-samp, ]
+head(train)
+```
+
+# EDA
+
+```{r pressure, echo=FALSE}
+
+pairs(train[,c(5:8,10,13)], lower.panel = NULL, main="Scatterplot of Quantitative Variables")
+
+
+## Numerical summaries
+correlation<-round(cor(train[,c(5:8,10,13)]),3)
+correlation
+
+
+### Boxplots of categorical variables vs response variables
+boxplot(num_subscribers~is_paid, main="Number of Subscribers by Is_Paid",data = train)
+boxplot(num_subscribers~subject, main="Number of Subscribers by Subject",data = train)
+boxplot(num_subscribers~level, main="Number of Subscribers by Level",data = train)
+subscribers <- subset(num_subscribers,num_subscribers < 50000)
+
+#not easy to see so subset the data
+levels <- subset(level,num_subscribers < 50000)
+boxplot(subscribers~levels, main="Number of Subscribers by Level (below 50K)",data = train)
+```
+
+
+# linear regression
+
+##initial model based on EDA: 1 quantitative var + all categorical vars
+```{r}
+initial<-lm(num_subscribers~ num_reviews + is_paid +subject, train)
+summary(initial)
+par(mfrow=c(2,2))
+plot(initial)
+
+library(MASS)
+boxcox(initial) #lambda = 0.2
+```
+
+##initial model with transformed y
+```{r}
+train$num_subscribers2 <- (train$num_subscribers)**(0.2)
+initial2 <-lm(num_subscribers2~ num_reviews + is_paid+subject, train)
+summary(initial2)
+par(mfrow=c(2,2))
+plot(initial2)
+```
+
+
+## Forward Selection
+
+### add the rest of quantitative variables one by one
+
+Partial F-test whether to any other quantitaive variables is significant: the price, num_lectures, and content duration, days since published
+```{r}
+model2 <-lm(num_subscribers2~num_reviews +is_paid+subject +price+num_lectures+days_published+content_duration, train)
+anova(initial2,model2) 
+```
+We reject null; one of them is significant. 
+
+
+T-test on days_published. Significant. we should include it.
+```{r}
+model3 <-lm(num_subscribers2~num_reviews +is_paid+subject+days_published, train)
+summary(model3)
+```
+
+T-test on content duration. Significant. we should include it.
+```{r}
+model4 <-lm(num_subscribers2~num_reviews + is_paid+subject+days_published+content_duration, train)
+summary(model4)
+```
+
+Test on num_lectures. Significant. We should include it.
+```{r}
+model5 <-lm(num_subscribers2~num_reviews +is_paid+subject+days_published+content_duration+num_lectures, train)
+summary(model5)
+```
+
+Test on price. Significant. We should include it.
+```{r}
+model6 <-lm(num_subscribers2~num_reviews +is_paid+subject+days_published+content_duration+price, train)
+summary(model6) # make 
+```
+
+Content duration became insignificant. remove it now.
+```{r}
+model6.2 <-lm(num_subscribers2~num_reviews +is_paid+subject+days_published+price, train)
+summary(model6.2) 
+```
+
+
+### add the rest of categorical variables (just level)
+
+```{r}
+model7 <-lm(num_subscribers2~num_reviews+is_paid+subject+days_published+price+level, train)
+summary(model7)
+anova(model6, model7) #significant; use model7
+```
+
+final model for now:
+```{r}
+final <-lm(num_subscribers2~num_reviews +is_paid+subject+days_published+price+level, train)
+summary(final)
+```
+
+
+## Backwards Elimination
+
+```{r}
+all <- lm(num_subscribers2 ~ num_reviews + price + num_lectures + content_duration +days_published + is_paid+subject+level, train)
+summary(all)
+```
+
+1.remove content duration
+```{r}
+reduced1 <- lm(num_subscribers2 ~ num_reviews + price + num_lectures +days_published + is_paid+subject+level, train)
+summary(reduced1)
+```
+
+2. remove num_lectures
+```{r}
+reduced2 <- lm(num_subscribers2 ~ num_reviews + price +days_published + is_paid+subject+level, train)
+
+summary(reduced2)
+plot(reduced2)
+```
+reduced2 is the same as final.
+
+
+## model diagnostics
+```{r}
+par(mfrow=c(2,2))
+plot(final)
+```
+
+Remove outliers:
+```{r}
+train2<-train[(rownames(train)!="3233" & rownames(train)!="3205" &  rownames(train)!="3248") ,]
+final2 <-lm(num_subscribers2~num_reviews +is_paid+subject+days_published+price+level, train2)
+summary(final2)
+plot(final2) #the real real final...
+```
+
+
+# Comparasion (initial w/ tranformed y vs final)
+
+1. R^2
+```{r}
+summary(initial2)$adj.r.squared #0.4133557
+summary(final2)$adj.r.squared #0.5130349
+```
+
+
+2. train mse
+```{r}
+pred_train1 <- predict(initial2, newdata = train, type = 'response')
+train.mse1 <-mean((pred_train1-train$num_subscribers2)^2) #1.467734
+
+test$num_subscribers2 <-(test$num_subscribers)^0.2 
+pred_train2 <- predict(final2, newdata = train, type = 'response')
+train.mse2 <-mean((pred_train2-train$num_subscribers2)^2) #1.443532
+
+```
+
+3. test mse
+```{r}
+pred_test1 <- predict(initial2, newdata = test, type = 'response')
+test.mse1 <- mean((pred_test1-test$num_subscribers2)^2) #1.534977
+
+pred_test2 <- predict(final2, newdata = test, type = 'response')
+test.mse2 <-mean((pred_test2 - test$num_subscribers2)^2) # 1.491749
+```
+
+
+
+
